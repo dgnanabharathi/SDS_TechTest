@@ -18,56 +18,52 @@ df_biomarker = pd.DataFrame(pd.read_sql("SELECT * FROM biomarker", conn))
 # Close the database connection
 conn.close()
 
-# Convert date-related columns to datetime format, handling invalid values by replacing them with NaN, 
-# and extracting only the date (YYYY-MM-DD) without the time component.
+# Convert dates to datetime format, handle errors, and extract only the date part  
 df_patient["dob"] = pd.to_datetime(df_patient["dob"], errors="coerce").dt.date
 df_patient["dod"] = pd.to_datetime(df_patient["dod"], errors="coerce").dt.date
 df_diagnosis["diagnosis_date"] = pd.to_datetime(df_diagnosis["diagnosis_date"], errors="coerce").dt.date
 df_biomarker["test_date"] = pd.to_datetime(df_biomarker["test_date"], errors="coerce").dt.date
 
 # Display the first few rows to verify
-print(df_patient.info())
-print(df_diagnosis.info())
-print(df_biomarker.info())
+print(df_patient.head())
+print(df_diagnosis.head())
+print(df_biomarker.head())
 
-# Merge the dataframes on 'patient_id' using a left join to keep all patients 
-# while adding diagnosis and biomarker data if available.
+
+#Merge the dataframes on 'patient_id'
 df_merged = df_patient.merge(df_diagnosis, on='patient_id', how='left') \
-                      .merge(df_biomarker, on='patient_id', how='left')
+                    .merge(df_biomarker, on='patient_id', how='left')
 
 
 print(df_merged.info())
 
-# Filter patients with breast cancer diagnosis (ICD codes starting with 'C50')
+# Filter patients with diagnosis codes starting with "C50" (Breast Cancer)
 bc_patients = df_merged[df_merged["diagnosis_code"].str.match(r"^C50.*")]
-# Identify the earliest diagnosis date for each patient (initial diagnosis)
+
 initial_diagnosis = bc_patients.groupby("patient_id")["diagnosis_date"].min().reset_index()
 initial_diagnosis.rename(columns={"diagnosis_date": "initial_diagnosis_date"}, inplace=True)
 
-
-# Identify the most recent diagnosis date for each patient
+# Last encounter from diagnosis table
 last_diagnosis = bc_patients.groupby("patient_id")["diagnosis_date"].max().reset_index()
 
-# Identify the most recent biomarker test date for each patient
+# Last encounter from biomarker table
 last_biomarker = bc_patients.groupby("patient_id")["test_date"].max().reset_index()
 
-# Merge last diagnosis and last biomarker test dates to get the latest encounter date
+# Merge both tables and take the maximum date
 last_encounter = pd.merge(last_diagnosis, last_biomarker, on="patient_id", how="outer")
 
-# Determine the most recent encounter date (either from diagnosis or biomarker test)
+# Get the latest encounter date from either diagnosis or biomarker
 last_encounter["last_encounter_date"] = last_encounter[["diagnosis_date", "test_date"]].max(axis=1)
 
-# Retain only the relevant columns for last encounter information
+# Keep only relevant columns
 last_encounter = last_encounter[["patient_id", "last_encounter_date"]]
 
-# Merge initial diagnosis data with last encounter data to compute follow-up time
+# Merge initial diagnosis and last encounter dates
 follow_up_data = pd.merge(initial_diagnosis, last_encounter, on="patient_id", how="left")
 
-# Calculate follow-up time in years, rounding to 2 decimal places
-follow_up_data["follow_up_time_years"] = (
-    (follow_up_data["last_encounter_date"] - follow_up_data["initial_diagnosis_date"])
-    .apply(lambda x: x.days) / 365
-).round(2)
+# Compute follow-up time in years (No need for .dt)
+follow_up_data["follow_up_time_years"] = ((follow_up_data["last_encounter_date"] - follow_up_data["initial_diagnosis_date"]).apply(lambda x: x.days) / 365).round(2)
+
 
 # Summary statistics
 # Remove rows where follow-up time is 0 years
@@ -95,8 +91,9 @@ plt.show()
 
 # Merge BC patients' initial diagnosis date with patient dob
 bc_age_data = pd.merge(initial_diagnosis, df_patient[["patient_id", "dob"]], on="patient_id", how="left")
+
 # Calculate age at initial diagnosis
-bc_age_data["age_at_diagnosis"] = ((bc_age_data["initial_diagnosis_date"] - bc_age_data["dob"]).apply(lambda x: x.days) / 365).round(0).astype(int)
+bc_age_data["age_at_diagnosis"] = ((bc_age_data["initial_diagnosis_date"] - bc_age_data["dob"]).apply(lambda x: x.days) / 365).round(2)
 
 # Summary statistics
 summary_stats_age = bc_age_data["age_at_diagnosis"].describe()
@@ -120,46 +117,49 @@ plt.title("Distribution of Age at Initial Diagnosis for BC Patients")
 plt.grid(axis="y", linestyle="--", alpha=0.7)
 plt.show()
 
-# Get unique patient IDs from the breast cancer (BC) patient dataset
+# Get unique patient IDs for breast cancer patients  
 bc_patient_ids = bc_patients["patient_id"].unique() 
 
-# Filter only the patients who have undergone HER2 biomarker testing
+# Filter records where the biomarker tested is HER2  
 her2_tests = bc_patients[bc_patients["biomarker_name"] == "HER2"]
 
-# Count the number of unique patients who were tested for HER2
+# Count the number of unique patients who were tested for HER2  
 patients_tested_for_her2 = her2_tests["patient_id"].nunique()
 
-# Calculate the intent-to-test rate: percentage of BC patients tested for HER2
+# Calculate the intent-to-test rate as the percentage of breast cancer patients tested for HER2  
 intent_to_test_rate = (patients_tested_for_her2 / len(bc_patient_ids)) * 100
+intent_to_test_rate
 
-# Define valid HER2 test results (excluding missing, unknown, or inconclusive results)
+# Define valid test results (exclude NA, Unknown, Inconclusive)
 valid_results = ["Positive", "Negative", "Equivocal"]
-
-# Filter only HER2 tests with valid results
 her2_valid_tests = her2_tests[her2_tests["test_result"].isin(valid_results)]
 
-# Calculate the tested rate: percentage of HER2-tested patients with a valid test result
+# Tested Rate: % of HER2-tested patients with a valid test result
 tested_rate = (her2_valid_tests["patient_id"].nunique() / patients_tested_for_her2) * 100
 
-# Identify HER2-negative test results
+# Negativity Rate: % of HER2-tested patients with a negative result
 her2_negative_tests = her2_valid_tests[her2_valid_tests["test_result"] == "Negative"]
-
-# Calculate negativity rate: percentage of HER2-tested patients with a negative result
 negativity_rate = (her2_negative_tests["patient_id"].nunique() / patients_tested_for_her2) * 100
 
-# Print the calculated rates with two decimal precision
+# Print Results
 print(f"Intent to Test Rate for HER2: {intent_to_test_rate:.2f}%")
 print(f"Tested Rate for HER2: {tested_rate:.2f}%")
 print(f"Negativity Rate for HER2: {negativity_rate:.2f}%")
 
 
-# Merge with bc_patients
+# Merge with bc_patients, keeping only the earliest diagnosis per patient
 bc_patients = bc_patients.merge(initial_diagnosis, on="patient_id", how="left")
+bc_patients = bc_patients.sort_values("initial_diagnosis_date").groupby("patient_id", as_index=False).first()
+
 # Step 2: Compute age at initial diagnosis
 bc_patients["age_at_diagnosis"] = ((bc_patients["initial_diagnosis_date"] - bc_patients["dob"]).apply(lambda x: x.days) / 365).round(2)
 
 # Step 3: Compute survival time (in years)
 bc_patients["survival_time"] = ((bc_patients["dod"] - bc_patients["initial_diagnosis_date"]).apply(lambda x: x.days) / 365).round(2)
+
+# Handle missing or incorrect survival times
+bc_patients = bc_patients.dropna(subset=["survival_time"])  # Drop rows where survival_time is NaN
+bc_patients = bc_patients[bc_patients["survival_time"] > 0]  # Keep only positive survival times
 
 # Step 4: Stratify into age groups (Below 60 and 60+)
 bc_patients["age_group"] = np.where(bc_patients["age_at_diagnosis"] < 60, "<60", "60+")
@@ -167,7 +167,15 @@ bc_patients["age_group"] = np.where(bc_patients["age_at_diagnosis"] < 60, "<60",
 # Step 5: Perform Log-Rank Test (Survival Difference)
 group1 = bc_patients[bc_patients["age_group"] == "<60"]
 group2 = bc_patients[bc_patients["age_group"] == "60+"]
-logrank_result = logrank_test(group1["survival_time"], group2["survival_time"], event_observed_A=group1["dod"].notna(), event_observed_B=group2["dod"].notna())
+
+
+# Perform the Log-Rank Test to compare survival distributions between the two groups  
+logrank_result = logrank_test(  
+    group1["survival_time"],  # Survival times for patients under 60  
+    group2["survival_time"],  # Survival times for patients 60 and older  
+    event_observed_A=group1["dod"].notna(),  # Event occurred (death) for group1  
+    event_observed_B=group2["dod"].notna()   # Event occurred (death) for group2  
+)  
 
 # Print Summary Statistics & Log-Rank Test Results
 summary_stats = bc_patients.groupby("age_group")["survival_time"].describe()
