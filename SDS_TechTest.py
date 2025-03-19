@@ -147,54 +147,57 @@ print(f"Tested Rate for HER2: {tested_rate:.2f}%")
 print(f"Negativity Rate for HER2: {negativity_rate:.2f}%")
 
 
-# Merge with bc_patients, keeping only the earliest diagnosis per patient
+# Step 1: Merge with bc_patients, keeping only the earliest diagnosis per patient
 bc_patients = bc_patients.merge(initial_diagnosis, on="patient_id", how="left")
+
+# Keep only the earliest diagnosis per patient  
 bc_patients = bc_patients.sort_values("initial_diagnosis_date").groupby("patient_id", as_index=False).first()
 
 # Step 2: Compute age at initial diagnosis
 bc_patients["age_at_diagnosis"] = ((bc_patients["initial_diagnosis_date"] - bc_patients["dob"]).apply(lambda x: x.days) / 365).round(2)
 
-# Step 3: Compute survival time (in years)
-bc_patients["survival_time"] = ((bc_patients["dod"] - bc_patients["initial_diagnosis_date"]).apply(lambda x: x.days) / 365).round(2)
+# Step 3: Define today's date for censoring
+today = datetime.date.today()  
 
-# Handle missing or incorrect survival times
-bc_patients = bc_patients.dropna(subset=["survival_time"])  # Drop rows where survival_time is NaN
+# Step 4: Compute survival time (in years), handling censoring
+bc_patients["survival_time"] = ((bc_patients["dod"].fillna(today) - bc_patients["initial_diagnosis_date"]).apply(lambda x: x.days) / 365).round(2)
 bc_patients = bc_patients[bc_patients["survival_time"] > 0]  # Keep only positive survival times
 
-# Step 4: Stratify into age groups (Below 60 and 60+)
+# Step 5: Identify whether the event (death) was observed
+bc_patients["event_observed"] = bc_patients["dod"].notna() & (bc_patients["dod"] <= today)
+
+# Step 6: Stratify into age groups (<60 and 60+)
 bc_patients["age_group"] = np.where(bc_patients["age_at_diagnosis"] < 60, "<60", "60+")
 
-# Step 5: Perform Log-Rank Test (Survival Difference)
+# Step 7: Perform Log-Rank Test (Survival Difference)
 group1 = bc_patients[bc_patients["age_group"] == "<60"]
 group2 = bc_patients[bc_patients["age_group"] == "60+"]
 
-
-# Perform the Log-Rank Test to compare survival distributions between the two groups  
-logrank_result = logrank_test(  
-    group1["survival_time"],  # Survival times for patients under 60  
-    group2["survival_time"],  # Survival times for patients 60 and older  
-    event_observed_A=group1["dod"].notna(),  # Event occurred (death) for group1  
-    event_observed_B=group2["dod"].notna()   # Event occurred (death) for group2  
-)  
+logrank_result = logrank_test(
+    group1["survival_time"],  
+    group2["survival_time"],  
+    event_observed_A=group1["event_observed"],  
+    event_observed_B=group2["event_observed"]  
+)
 
 # Print Summary Statistics & Log-Rank Test Results
-summary_stats = bc_patients.groupby("age_group")["survival_time"].describe()
+summary_stats = bc_patients.groupby("age_group")["survival_time"].describe().round(2)
 print("Summary Statistics for Survival Time by Age Group:")
 print(summary_stats)
 print("\nLog-Rank Test P-Value:", logrank_result.p_value)
 
-# Step 6: Plot Kaplan-Meier Survival Curve
+# Step 8: Plot Kaplan-Meier Survival Curve
 kmf1 = KaplanMeierFitter()
 kmf2 = KaplanMeierFitter()
 
 plt.figure(figsize=(10, 6))
 
 # Fit & Plot for Age < 60
-kmf1.fit(group1["survival_time"], event_observed=group1["dod"].notna(), label="Age < 60")
+kmf1.fit(group1["survival_time"], event_observed=group1["event_observed"], label="Age < 60")
 kmf1.plot_survival_function(ci_show=False)
 
 # Fit & Plot for Age 60+
-kmf2.fit(group2["survival_time"], event_observed=group2["dod"].notna(), label="Age 60+")
+kmf2.fit(group2["survival_time"], event_observed=group2["event_observed"], label="Age 60+")
 kmf2.plot_survival_function(ci_show=False)
 
 plt.xlabel("Survival Time (Years)")
