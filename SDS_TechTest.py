@@ -131,7 +131,7 @@ intent_to_test_rate = (patients_tested_for_her2 / len(bc_patient_ids)) * 100
 intent_to_test_rate
 
 # Define valid test results (exclude NA, Unknown, Inconclusive)
-valid_results = ["Positive", "Negative", "Equivocal"]
+valid_results = ["Positive", "Negative"]
 her2_valid_tests = her2_tests[her2_tests["test_result"].isin(valid_results)]
 
 # Tested Rate: % of HER2-tested patients with a valid test result
